@@ -12,9 +12,21 @@ class WorkerTest {
 
     private Worker worker;
 
+    // Subclass to stub out network and thread logic for fast tests
+    static class TestWorker extends Worker {
+        @Override
+        public void joinCluster(String masterHost, int port) {
+            // Do nothing (no real socket)
+        }
+        @Override
+        public void execute() {
+            // Do nothing
+        }
+    }
+
     @BeforeEach
     void setUp() {
-        worker = new Worker();
+        worker = new TestWorker();
     }
 
     @Test
