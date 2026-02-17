@@ -18,6 +18,35 @@ import java.nio.ByteBuffer;
  * checks.
  */
 public class Master {
+            /**
+             * RPC abstraction: Send a Message to a worker over a socket.
+             */
+            private void sendRpcRequest(Socket socket, Message msg) throws IOException {
+                byte[] out = msg.pack();
+                synchronized (socket) {
+                    socket.getOutputStream().write(out);
+                    socket.getOutputStream().flush();
+                }
+            }
+
+            /**
+             * RPC abstraction: Receive a Message from a worker over a socket.
+             */
+            private Message receiveRpcResponse(Socket socket) throws IOException {
+                InputStream in = socket.getInputStream();
+                byte[] lenBuf = new byte[4];
+                int n = in.read(lenBuf);
+                if (n < 4) throw new IOException("Socket closed or incomplete message");
+                int mlen = ByteBuffer.wrap(lenBuf).getInt();
+                byte[] mBuf = new byte[mlen];
+                int rcv = 0;
+                while (rcv < mlen) {
+                    int r = in.read(mBuf, rcv, mlen - rcv);
+                    if (r == -1) throw new IOException("Socket closed");
+                    rcv += r;
+                }
+                return Message.unpack(mBuf);
+            }
         // Track server socket for shutdown
         private volatile ServerSocket serverSocketRef = null;
     // Thread pool for handling worker connections
@@ -101,11 +130,7 @@ public class Master {
                             msg.matrixB = task.matrixB;
                             msg.workerId = worker.workerId;
                             msg.studentId = System.getenv("STUDENT_ID");
-                            byte[] out = msg.pack();
-                            synchronized (worker.socket) {
-                                worker.socket.getOutputStream().write(out);
-                                worker.socket.getOutputStream().flush();
-                            }
+                            sendRpcRequest(worker.socket, msg);
                             taskStatus.put(task.id, TaskStatus.IN_PROGRESS);
                             assigned = true;
                         } catch (Exception e) {
@@ -127,15 +152,7 @@ public class Master {
                     WorkerInfo worker = entry.getValue();
                     if (!worker.alive) continue;
                     try {
-                        InputStream in = worker.socket.getInputStream();
-                        if (in.available() < 4) continue;
-                        byte[] lenBuf = new byte[4];
-                        in.read(lenBuf);
-                        int mlen = ByteBuffer.wrap(lenBuf).getInt();
-                        if (in.available() < mlen) continue;
-                        byte[] mBuf = new byte[mlen];
-                        in.read(mBuf);
-                        Message msg = Message.unpack(mBuf);
+                        Message msg = receiveRpcResponse(worker.socket);
                         if (msg.type == Message.MessageType.TASK_RESULT) {
                             rowResults.put(msg.taskId, msg.result[0]);
                             completed.add(msg.taskId);

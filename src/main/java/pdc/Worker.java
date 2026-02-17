@@ -15,6 +15,35 @@ import java.nio.ByteBuffer;
  */
 
 public class Worker {
+    /**
+     * RPC abstraction: Send a Message to the master over a socket.
+     */
+    private void sendRpcResponse(Socket socket, Message msg) throws IOException {
+        byte[] out = msg.pack();
+        synchronized (socket) {
+            socket.getOutputStream().write(out);
+            socket.getOutputStream().flush();
+        }
+    }
+
+    /**
+     * RPC abstraction: Receive a Message from the master over a socket.
+     */
+    private Message receiveRpcRequest(Socket socket) throws IOException {
+        InputStream in = socket.getInputStream();
+        byte[] lenBuf = new byte[4];
+        int n = in.read(lenBuf);
+        if (n < 4) throw new IOException("Socket closed or incomplete message");
+        int mlen = ByteBuffer.wrap(lenBuf).getInt();
+        byte[] mBuf = new byte[mlen];
+        int rcv = 0;
+        while (rcv < mlen) {
+            int r = in.read(mBuf, rcv, mlen - rcv);
+            if (r == -1) throw new IOException("Socket closed");
+            rcv += r;
+        }
+        return Message.unpack(mBuf);
+    }
     private ExecutorService executor = Executors.newFixedThreadPool(4);
     private volatile boolean running = true;
 
@@ -33,9 +62,7 @@ public class Worker {
             Message reg = new Message(Message.MessageType.REGISTER);
             reg.workerId = workerId;
             reg.studentId = studentId;
-            byte[] msgBytes = reg.pack();
-            socket.getOutputStream().write(msgBytes);
-            socket.getOutputStream().flush();
+            sendRpcResponse(socket, reg);
             System.err.println("[Worker] Registered with master as " + workerId);
             // Start heartbeat thread
             startHeartbeatThread(socket, workerId, studentId);
@@ -54,9 +81,7 @@ public class Worker {
                     hb.workerId = workerId;
                     hb.studentId = studentId;
                     hb.timestamp = System.currentTimeMillis();
-                    byte[] msg = hb.pack();
-                    socket.getOutputStream().write(msg);
-                    socket.getOutputStream().flush();
+                    sendRpcResponse(socket, hb);
                     Thread.sleep(2000);
                 } catch (Exception e) {
                     System.err.println("[Worker] Heartbeat error: " + e.getMessage());
@@ -69,20 +94,8 @@ public class Worker {
     private void listenForTasks(Socket socket, String workerId, String studentId) {
         new Thread(() -> {
             try {
-                InputStream in = socket.getInputStream();
-                byte[] lenBuf = new byte[4];
                 while (running) {
-                    int n = in.read(lenBuf);
-                    if (n < 4) break;
-                    int mlen = ByteBuffer.wrap(lenBuf).getInt();
-                    byte[] mBuf = new byte[mlen];
-                    int rcv = 0;
-                    while (rcv < mlen) {
-                        int r = in.read(mBuf, rcv, mlen - rcv);
-                        if (r == -1) throw new IOException("Socket closed");
-                        rcv += r;
-                    }
-                    Message msg = Message.unpack(mBuf);
+                    Message msg = receiveRpcRequest(socket);
                     if (msg.type == Message.MessageType.TASK_ASSIGNMENT) {
                         executor.submit(() -> processTask(msg, socket, workerId, studentId));
                     }
@@ -113,9 +126,7 @@ public class Worker {
             res.result = result;
             res.workerId = workerId;
             res.studentId = studentId;
-            byte[] out = res.pack();
-            socket.getOutputStream().write(out);
-            socket.getOutputStream().flush();
+            sendRpcResponse(socket, res);
             System.err.println("[Worker] Sent result for task " + msg.taskId);
         } catch (Exception e) {
             System.err.println("[Worker] Failed to send result: " + e.getMessage());
