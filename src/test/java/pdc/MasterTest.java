@@ -30,6 +30,7 @@ class MasterTest {
     void testListen_NoBlocking() {
         assertDoesNotThrow(() -> {
             master.listen(0); // Port 0 uses any available port
+            master.shutdown(); // Ensure background threads are stopped
         }, "Server listen logic should handle setup without blocking the main thread incorrectly");
     }
 
